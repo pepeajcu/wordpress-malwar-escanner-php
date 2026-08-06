@@ -33,15 +33,21 @@
 
     function startScan() {
         el.startBtn.disabled = true;
-        postForm('start_scan', {}).then((res) => {
+        el.controls.classList.add('hidden');
+        el.progressWrap.classList.remove('hidden');
+        el.progressText.textContent = 'Preparando escaneo (recorriendo el árbol de archivos)... en sitios grandes esto puede tardar varios minutos antes de que aparezca el primer avance.';
+
+        postForm('start_scan', {})
+            .catch(() => ({ error: 'Se perdió la conexión con el servidor o tardó demasiado en responder (puede ser el límite max_execution_time de tu hosting cortando la preparación del escaneo en un sitio muy grande). Intenta de nuevo; si persiste, reduce limits.batch_size en config.php o contacta a tu hosting.' }))
+            .then((res) => {
             if (res.error) {
-                alert('Error al iniciar el escaneo: ' + res.error);
+                el.progressText.textContent = 'Error al iniciar el escaneo: ' + res.error;
+                el.progressWrap.classList.add('hidden');
+                el.controls.classList.remove('hidden');
                 el.startBtn.disabled = false;
                 return;
             }
             state.runId = res.run_id;
-            el.controls.classList.add('hidden');
-            el.progressWrap.classList.remove('hidden');
             runNextBatch();
         });
     }

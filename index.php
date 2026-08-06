@@ -195,7 +195,7 @@ $csrfToken = Auth::csrfToken();
         </div>
         <div id="scan-progress" class="hidden">
             <progress id="progress-bar" value="0" max="100"></progress>
-            <p id="progress-text"></p>
+            <p id="progress-text">Preparando escaneo (recorriendo el árbol de archivos)... en sitios grandes esto puede tardar varios minutos antes de que aparezca el primer avance.</p>
             <p id="ai-progress-text" class="muted"></p>
             <p id="vt-progress-text" class="muted"></p>
         </div>
@@ -211,6 +211,7 @@ $csrfToken = Auth::csrfToken();
                     <option value="high">Alta</option>
                     <option value="medium">Media</option>
                     <option value="low">Baja</option>
+                    <option value="info">Info / avisos</option>
                 </select>
             </label>
         </div>
