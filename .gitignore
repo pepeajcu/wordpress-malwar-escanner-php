@@ -1,0 +1,18 @@
+# Config real con contraseñas y API keys: nunca se sube, cada instalación crea la suya
+config.php
+.htpasswd
+
+# Estado de runtime (base de datos de escaneo, archivos en cuarentena)
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+quarantine/files/
+quarantine/suspicious_files.log
+
+# Mantener las carpetas vacías versionadas
+!data/.htaccess
+!quarantine/.htaccess
+
+# Sistema
+.DS_Store
+Thumbs.db

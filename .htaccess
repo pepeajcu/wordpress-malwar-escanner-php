@@ -1,0 +1,23 @@
+# --- Scanner Antimalware: hardening de acceso ---
+
+# 1) Nunca servir archivos ocultos (.htpasswd, .git, .env, etc.)
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# 2) Basic Auth como segunda capa de acceso, ADEMÁS del login propio de la app.
+#    Deshabilitado por defecto: actívalo después de generar tu .htpasswd con
+#    `php tools/generate_htpasswd.php tu_usuario tu_password` (ver README.md).
+#    Si activas estas líneas SIN tener .htpasswd, Apache devolverá error 500.
+#
+# AuthType Basic
+# AuthName "Acceso restringido"
+# AuthUserFile /ruta/absoluta/a/esta/carpeta/.htpasswd
+# Require valid-user
+
+# 3) Compatibilidad Apache 2.2 (algunos shared hosting antiguos) para el bloque anterior:
+# <FilesMatch ".">
+#     Order allow,deny
+#     Deny from all
+#     Satisfy any
+# </FilesMatch>
