@@ -2,7 +2,8 @@
     'use strict';
 
     const state = {
-        runId: window.SCANNER.activeRunId || null,
+        runId: window.SCANNER.activeRunId || null, // escaneo activo (el que se está corriendo/reanudando)
+        viewRunId: window.SCANNER.activeRunId || null, // escaneo que se está mostrando en la tabla de hallazgos (puede ser histórico)
         polling: false,
     };
 
@@ -10,6 +11,9 @@
         startBtn: document.getElementById('start-scan-btn'),
         controls: document.getElementById('scan-controls'),
         progressWrap: document.getElementById('scan-progress'),
+        discoverPhase: document.getElementById('discover-phase'),
+        discoverText: document.getElementById('discover-text'),
+        processPhase: document.getElementById('process-phase'),
         progressBar: document.getElementById('progress-bar'),
         progressText: document.getElementById('progress-text'),
         aiProgressText: document.getElementById('ai-progress-text'),
@@ -17,6 +21,12 @@
         severityFilter: document.getElementById('severity-filter'),
         findingsBody: document.querySelector('#findings-table tbody'),
         quarantineBody: document.querySelector('#quarantine-table tbody'),
+        unreadableBody: document.querySelector('#unreadable-table tbody'),
+        unreadableCount: document.getElementById('unreadable-count'),
+        historyBody: document.querySelector('#history-table tbody'),
+        viewingBanner: document.getElementById('viewing-banner'),
+        viewingRunId: document.getElementById('viewing-run-id'),
+        backToCurrent: document.getElementById('back-to-current'),
         viewer: document.getElementById('file-viewer'),
         viewerContent: document.getElementById('file-viewer-content'),
         closeViewer: document.getElementById('close-viewer'),
@@ -31,58 +41,103 @@
         }).then((r) => r.json());
     }
 
+    const CONNECTION_ERROR = {
+        error: 'Se perdió la conexión con el servidor o tardó demasiado en responder (puede ser el límite max_execution_time de tu hosting). Intenta de nuevo; si persiste, reduce los *_batch_size en config.php.',
+    };
+
     function startScan() {
         el.startBtn.disabled = true;
         el.controls.classList.add('hidden');
         el.progressWrap.classList.remove('hidden');
-        el.progressText.textContent = 'Preparando escaneo (recorriendo el árbol de archivos)... en sitios grandes esto puede tardar varios minutos antes de que aparezca el primer avance.';
+        el.discoverPhase.classList.remove('hidden');
+        el.processPhase.classList.add('hidden');
+        el.discoverText.textContent = 'Preparando escaneo...';
 
         postForm('start_scan', {})
-            .catch(() => ({ error: 'Se perdió la conexión con el servidor o tardó demasiado en responder (puede ser el límite max_execution_time de tu hosting cortando la preparación del escaneo en un sitio muy grande). Intenta de nuevo; si persiste, reduce limits.batch_size en config.php o contacta a tu hosting.' }))
+            .catch(() => CONNECTION_ERROR)
             .then((res) => {
-            if (res.error) {
-                el.progressText.textContent = 'Error al iniciar el escaneo: ' + res.error;
-                el.progressWrap.classList.add('hidden');
-                el.controls.classList.remove('hidden');
-                el.startBtn.disabled = false;
-                return;
-            }
-            state.runId = res.run_id;
-            runNextBatch();
-        });
+                if (res.error) {
+                    showStartError(res.error);
+                    return;
+                }
+                state.runId = res.run_id;
+                state.viewRunId = res.run_id;
+                showViewingBanner();
+                runNextDiscoverBatch();
+            });
+    }
+
+    function showStartError(message) {
+        el.discoverText.textContent = 'Error al iniciar el escaneo: ' + message;
+        el.progressWrap.classList.add('hidden');
+        el.controls.classList.remove('hidden');
+        el.startBtn.disabled = false;
+    }
+
+    function runNextDiscoverBatch() {
+        if (!state.runId) return;
+
+        postForm('discover_batch', { run_id: state.runId })
+            .catch(() => CONNECTION_ERROR)
+            .then((res) => {
+                if (res.error) {
+                    el.discoverText.textContent = 'Error explorando carpetas: ' + res.error;
+                    return;
+                }
+
+                let text = 'Explorando: ' + res.dirs_done + ' carpeta(s) revisadas, ' + res.files_found + ' archivo(s) encontrados';
+                if (res.unreadable_count > 0) {
+                    text += ', ' + res.unreadable_count + ' carpeta(s) sin acceso';
+                    loadUnreadable();
+                }
+                el.discoverText.textContent = text + '...';
+
+                if (res.finished) {
+                    el.discoverPhase.classList.add('hidden');
+                    el.processPhase.classList.remove('hidden');
+                    loadUnreadable();
+                    runNextBatch();
+                    return;
+                }
+
+                setTimeout(runNextDiscoverBatch, window.SCANNER.batchDelayMs || 300);
+            });
     }
 
     function runNextBatch() {
         if (!state.runId) return;
         state.polling = true;
 
-        postForm('scan_batch', { run_id: state.runId }).then((res) => {
-            if (res.error) {
-                el.progressText.textContent = 'Error: ' + res.error;
-                state.polling = false;
-                return;
-            }
+        postForm('scan_batch', { run_id: state.runId })
+            .catch(() => CONNECTION_ERROR)
+            .then((res) => {
+                if (res.error) {
+                    el.progressText.textContent = 'Error: ' + res.error;
+                    state.polling = false;
+                    return;
+                }
 
-            const pct = res.total > 0 ? Math.round((res.processed / res.total) * 100) : 100;
-            el.progressBar.value = pct;
-            el.progressText.textContent =
-                res.processed + ' / ' + res.total + ' archivos procesados — ' +
-                res.new_findings + ' hallazgo(s) nuevo(s) en este lote.';
+                const pct = res.total > 0 ? Math.round((res.processed / res.total) * 100) : 100;
+                el.progressBar.value = pct;
+                el.progressText.textContent =
+                    res.processed + ' / ' + res.total + ' archivos procesados — ' +
+                    res.new_findings + ' hallazgo(s) nuevo(s) en este lote.';
 
-            if (res.new_findings > 0) {
-                loadFindings();
-            }
+                if (res.new_findings > 0) {
+                    loadFindings();
+                }
 
-            if (res.finished) {
-                state.polling = false;
-                el.progressText.textContent += ' — Escaneo heurístico completo.';
-                loadFindings();
-                runNextAiBatch();
-                return;
-            }
+                if (res.finished) {
+                    state.polling = false;
+                    el.progressText.textContent += ' — Escaneo heurístico completo.';
+                    loadFindings();
+                    loadHistory();
+                    runNextAiBatch();
+                    return;
+                }
 
-            setTimeout(runNextBatch, window.SCANNER.batchDelayMs || 300);
-        });
+                setTimeout(runNextBatch, window.SCANNER.batchDelayMs || 300);
+            });
     }
 
     function runNextAiBatch() {
@@ -132,9 +187,18 @@
         return map[sev] || sev;
     }
 
+    function showViewingBanner() {
+        if (state.viewRunId && state.viewRunId !== state.runId) {
+            el.viewingRunId.textContent = state.viewRunId;
+            el.viewingBanner.classList.remove('hidden');
+        } else {
+            el.viewingBanner.classList.add('hidden');
+        }
+    }
+
     function loadFindings() {
         const severity = el.severityFilter.value;
-        const params = new URLSearchParams({ run_id: state.runId || '', severity: severity });
+        const params = new URLSearchParams({ run_id: state.viewRunId || '', severity: severity });
 
         fetch('index.php?action=findings_json&' + params.toString())
             .then((r) => r.json())
@@ -180,6 +244,7 @@
                     tr.appendChild(tdVt);
 
                     const tdActions = document.createElement('td');
+                    const isCurrentRun = state.viewRunId === state.runId;
 
                     const viewBtn = document.createElement('button');
                     viewBtn.type = 'button';
@@ -187,7 +252,7 @@
                     viewBtn.addEventListener('click', () => viewFile(row.path));
                     tdActions.appendChild(viewBtn);
 
-                    if (row.status === 'open') {
+                    if (row.status === 'open' && isCurrentRun) {
                         const whitelistBtn = document.createElement('button');
                         whitelistBtn.type = 'button';
                         whitelistBtn.textContent = 'Falso positivo';
@@ -202,12 +267,92 @@
                     } else {
                         const statusSpan = document.createElement('span');
                         statusSpan.className = 'status-badge';
-                        statusSpan.textContent = row.status;
+                        statusSpan.textContent = isCurrentRun ? row.status : 'histórico';
                         tdActions.appendChild(statusSpan);
                     }
 
                     tr.appendChild(tdActions);
                     el.findingsBody.appendChild(tr);
+                });
+            });
+    }
+
+    function loadUnreadable() {
+        const runId = state.viewRunId || state.runId;
+        if (!runId) return;
+
+        fetch('index.php?action=unreadable_list&run_id=' + encodeURIComponent(runId))
+            .then((r) => r.json())
+            .then((rows) => {
+                el.unreadableBody.innerHTML = '';
+                rows.forEach((row) => {
+                    const tr = document.createElement('tr');
+
+                    const tdPath = document.createElement('td');
+                    tdPath.textContent = row.path;
+                    tdPath.className = 'mono';
+                    tr.appendChild(tdPath);
+
+                    const tdDate = document.createElement('td');
+                    tdDate.textContent = row.created_at;
+                    tr.appendChild(tdDate);
+
+                    el.unreadableBody.appendChild(tr);
+                });
+
+                if (rows.length > 0) {
+                    el.unreadableCount.textContent = String(rows.length);
+                    el.unreadableCount.classList.remove('hidden');
+                } else {
+                    el.unreadableCount.classList.add('hidden');
+                }
+            });
+    }
+
+    function loadHistory() {
+        fetch('index.php?action=scan_history')
+            .then((r) => r.json())
+            .then((rows) => {
+                el.historyBody.innerHTML = '';
+                rows.forEach((row) => {
+                    const tr = document.createElement('tr');
+
+                    const tdId = document.createElement('td');
+                    tdId.textContent = '#' + row.id;
+                    tr.appendChild(tdId);
+
+                    const tdStatus = document.createElement('td');
+                    const statusLabels = { discovering: 'Explorando...', running: 'Escaneando...', completed: 'Completo' };
+                    tdStatus.textContent = statusLabels[row.status] || row.status;
+                    tr.appendChild(tdStatus);
+
+                    const tdStarted = document.createElement('td');
+                    tdStarted.textContent = row.started_at;
+                    tr.appendChild(tdStarted);
+
+                    const tdFiles = document.createElement('td');
+                    tdFiles.textContent = row.processed_files + ' / ' + row.total_files;
+                    tr.appendChild(tdFiles);
+
+                    const tdFindings = document.createElement('td');
+                    tdFindings.textContent = row.findings_count;
+                    tr.appendChild(tdFindings);
+
+                    const tdActions = document.createElement('td');
+                    const viewBtn = document.createElement('button');
+                    viewBtn.type = 'button';
+                    viewBtn.textContent = 'Ver hallazgos';
+                    viewBtn.addEventListener('click', () => {
+                        state.viewRunId = row.id;
+                        showViewingBanner();
+                        loadFindings();
+                        loadUnreadable();
+                        window.scrollTo({ top: document.querySelector('#findings-table').offsetTop - 20, behavior: 'smooth' });
+                    });
+                    tdActions.appendChild(viewBtn);
+                    tr.appendChild(tdActions);
+
+                    el.historyBody.appendChild(tr);
                 });
             });
     }
@@ -297,12 +442,32 @@
     el.startBtn.addEventListener('click', startScan);
     el.severityFilter.addEventListener('change', loadFindings);
     el.closeViewer.addEventListener('click', () => el.viewer.classList.add('hidden'));
+    el.backToCurrent.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        state.viewRunId = state.runId;
+        showViewingBanner();
+        loadFindings();
+        loadUnreadable();
+    });
 
     if (state.runId) {
         el.controls.classList.add('hidden');
         el.progressWrap.classList.remove('hidden');
-        runNextBatch();
+
+        if (window.SCANNER.activeRunStatus === 'discovering') {
+            el.discoverPhase.classList.remove('hidden');
+            el.processPhase.classList.add('hidden');
+            runNextDiscoverBatch();
+        } else {
+            el.discoverPhase.classList.add('hidden');
+            el.processPhase.classList.remove('hidden');
+            runNextBatch();
+        }
     }
+
+    showViewingBanner();
     loadFindings();
+    loadUnreadable();
     loadQuarantine();
+    loadHistory();
 })();

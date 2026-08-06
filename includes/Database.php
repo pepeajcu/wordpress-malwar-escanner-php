@@ -58,6 +58,20 @@ final class Database
         ');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_scan_queue_run_status ON scan_queue (run_id, status)');
 
+        // Cola de descubrimiento: recorrido del árbol de carpetas en lotes (misma lógica que
+        // scan_queue pero un nivel arriba), para poder mostrar progreso incremental mientras se
+        // cuenta cuántos archivos hay, en vez de bloquear un solo request hasta terminar.
+        $pdo->exec('
+            CREATE TABLE IF NOT EXISTS scan_dir_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                path TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT "pending",
+                FOREIGN KEY (run_id) REFERENCES scan_runs(id)
+            )
+        ');
+        $pdo->exec('CREATE INDEX IF NOT EXISTS idx_scan_dir_queue_run_status ON scan_dir_queue (run_id, status)');
+
         $pdo->exec('
             CREATE TABLE IF NOT EXISTS file_hashes (
                 path TEXT PRIMARY KEY,

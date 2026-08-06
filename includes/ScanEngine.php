@@ -6,6 +6,7 @@ final class ScanEngine
 {
     private const SEVERITY_RANK = ['info' => 0, 'low' => 1, 'medium' => 2, 'high' => 3, 'critical' => 4];
 
+    /** Crea el run y siembra la cola de descubrimiento; NO recorre el árbol todavía (eso es discoverBatch, por lotes). */
     public static function startRun(): int
     {
         $pdo = Database::connection();
@@ -15,20 +16,27 @@ final class ScanEngine
             throw new RuntimeException('Ninguna de las scan_roots configuradas existe o es accesible.');
         }
 
-        $stmt = $pdo->prepare('INSERT INTO scan_runs (status, scan_roots) VALUES ("running", :roots)');
+        $stmt = $pdo->prepare('INSERT INTO scan_runs (status, scan_roots) VALUES ("discovering", :roots)');
         $stmt->execute([':roots' => implode(PHP_EOL, $roots)]);
         $runId = (int) $pdo->lastInsertId();
 
-        FileWalker::enqueueAll($runId);
+        FileWalker::seedDiscovery($runId);
 
         return $runId;
+    }
+
+    /** @return array{dirs_done:int, dirs_pending:int, files_found:int, unreadable_count:int, finished:bool} */
+    public static function discoverBatch(int $runId): array
+    {
+        $batchSize = (int) Config::get('limits.discover_batch_size', 40);
+        return FileWalker::discoverBatch($runId, $batchSize);
     }
 
     public static function resumableRunId(): ?int
     {
         $pdo = Database::connection();
         $stmt = $pdo->query(
-            'SELECT id FROM scan_runs WHERE status = "running" ORDER BY id DESC LIMIT 1'
+            'SELECT id FROM scan_runs WHERE status IN ("discovering", "running") ORDER BY id DESC LIMIT 1'
         );
         $row = $stmt->fetch();
         return $row ? (int) $row['id'] : null;
@@ -38,6 +46,14 @@ final class ScanEngine
     public static function processBatch(int $runId): array
     {
         $pdo = Database::connection();
+
+        $runStatus = self::run($runId)['status'] ?? null;
+        if ($runStatus === 'discovering') {
+            // Todavía no terminó de contar el árbol de archivos; el frontend debe seguir
+            // llamando a discover_batch antes de pasar a esta fase.
+            throw new RuntimeException('El descubrimiento de archivos aún no terminó.');
+        }
+
         $batchSize = (int) Config::get('limits.batch_size', 25);
         $maxFullRead = (int) Config::get('limits.max_file_size_full_read', 5 * 1024 * 1024);
 
@@ -153,10 +169,11 @@ final class ScanEngine
         ];
     }
 
+    /** Hallazgos "reales" (malware/integridad/etc). Los avisos de carpetas sin acceso viven aparte, ver unreadableFindings(). */
     public static function findings(int $runId, ?string $severity = null, ?string $status = null): array
     {
         $pdo = Database::connection();
-        $sql = 'SELECT * FROM findings WHERE run_id = :run_id';
+        $sql = 'SELECT * FROM findings WHERE run_id = :run_id AND source != "scan_warning"';
         $params = [':run_id' => $runId];
 
         if ($severity !== null) {
@@ -176,6 +193,18 @@ final class ScanEngine
         return $stmt->fetchAll();
     }
 
+    /** Carpetas/rutas sin permiso de lectura detectadas durante el escaneo, mostradas aparte de los hallazgos de malware. */
+    public static function unreadableFindings(int $runId): array
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare(
+            'SELECT id, path, reason, created_at FROM findings
+             WHERE run_id = :run_id AND source = "scan_warning" ORDER BY id ASC'
+        );
+        $stmt->execute([':run_id' => $runId]);
+        return $stmt->fetchAll();
+    }
+
     public static function run(int $runId): ?array
     {
         $pdo = Database::connection();
@@ -183,5 +212,15 @@ final class ScanEngine
         $stmt->execute([':id' => $runId]);
         $row = $stmt->fetch();
         return $row ?: null;
+    }
+
+    /** Historial de escaneos previos (persistido en SQLite; sobrevive a actualizaciones de código). */
+    public static function history(int $limit = 20): array
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare('SELECT * FROM scan_runs ORDER BY id DESC LIMIT :limit');
+        $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
     }
 }

@@ -46,6 +46,21 @@ if ($action === 'start_scan' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($action === 'discover_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    Auth::requireCsrf();
+    header('Content-Type: application/json');
+    $runId = (int) ($_POST['run_id'] ?? 0);
+
+    if ($runId <= 0 || !ScanEngine::run($runId)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'run_id inválido.']);
+        exit;
+    }
+
+    echo json_encode(ScanEngine::discoverBatch($runId));
+    exit;
+}
+
 if ($action === 'scan_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     Auth::requireCsrf();
     header('Content-Type: application/json');
@@ -57,7 +72,12 @@ if ($action === 'scan_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
         exit;
     }
 
-    echo json_encode(ScanEngine::processBatch($runId));
+    try {
+        echo json_encode(ScanEngine::processBatch($runId));
+    } catch (Throwable $e) {
+        http_response_code(409);
+        echo json_encode(['error' => $e->getMessage()]);
+    }
     exit;
 }
 
@@ -168,6 +188,19 @@ if ($action === 'findings_json') {
     exit;
 }
 
+if ($action === 'unreadable_list') {
+    header('Content-Type: application/json');
+    $runId = (int) ($_GET['run_id'] ?? 0);
+    echo json_encode(ScanEngine::unreadableFindings($runId));
+    exit;
+}
+
+if ($action === 'scan_history') {
+    header('Content-Type: application/json');
+    echo json_encode(ScanEngine::history());
+    exit;
+}
+
 // --- Dashboard (HTML) ---
 $activeRunId = ScanEngine::resumableRunId();
 $run = $activeRunId ? ScanEngine::run($activeRunId) : null;
@@ -194,15 +227,36 @@ $csrfToken = Auth::csrfToken();
             <button id="start-scan-btn" type="button">Iniciar escaneo</button>
         </div>
         <div id="scan-progress" class="hidden">
-            <progress id="progress-bar" value="0" max="100"></progress>
-            <p id="progress-text">Preparando escaneo (recorriendo el árbol de archivos)... en sitios grandes esto puede tardar varios minutos antes de que aparezca el primer avance.</p>
+            <div id="discover-phase">
+                <progress id="discover-bar" class="indeterminate"></progress>
+                <p id="discover-text">Explorando el árbol de carpetas...</p>
+            </div>
+            <div id="process-phase" class="hidden">
+                <progress id="progress-bar" value="0" max="100"></progress>
+                <p id="progress-text"></p>
+            </div>
             <p id="ai-progress-text" class="muted"></p>
             <p id="vt-progress-text" class="muted"></p>
         </div>
     </section>
 
     <section class="panel">
+        <h2>Carpetas sin acceso <span id="unreadable-count" class="badge hidden">0</span></h2>
+        <p class="muted">Estas rutas no se pudieron leer por permisos y quedaron fuera del escaneo. No son necesariamente un problema, pero conviene revisarlas.</p>
+        <table id="unreadable-table">
+            <thead>
+                <tr>
+                    <th>Ruta</th>
+                    <th>Detectado</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
+
+    <section class="panel">
         <h2>Hallazgos</h2>
+        <p id="viewing-banner" class="muted hidden">Viendo escaneo #<span id="viewing-run-id"></span> (histórico). <a href="#" id="back-to-current">Volver al escaneo actual</a></p>
         <div class="filters">
             <label>Severidad
                 <select id="severity-filter">
@@ -211,7 +265,6 @@ $csrfToken = Auth::csrfToken();
                     <option value="high">Alta</option>
                     <option value="medium">Media</option>
                     <option value="low">Baja</option>
-                    <option value="info">Info / avisos</option>
                 </select>
             </label>
         </div>
@@ -246,6 +299,24 @@ $csrfToken = Auth::csrfToken();
             <tbody></tbody>
         </table>
     </section>
+
+    <section class="panel">
+        <h2>Historial de escaneos</h2>
+        <p class="muted">Se conserva en <code>data/scan.sqlite</code> y sobrevive a actualizaciones de código (no borres esa carpeta al resubir archivos).</p>
+        <table id="history-table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Estado</th>
+                    <th>Iniciado</th>
+                    <th>Archivos</th>
+                    <th>Hallazgos</th>
+                    <th>Acciones</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </section>
 </main>
 
 <div id="file-viewer" class="modal hidden">
@@ -259,6 +330,7 @@ $csrfToken = Auth::csrfToken();
     window.SCANNER = {
         csrfToken: <?= json_encode($csrfToken) ?>,
         activeRunId: <?= json_encode($activeRunId) ?>,
+        activeRunStatus: <?= json_encode($run['status'] ?? null) ?>,
         batchDelayMs: <?= json_encode((int) Config::get('limits.batch_delay_ms', 300)) ?>
     };
 </script>

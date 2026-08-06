@@ -32,8 +32,24 @@ es siempre una acción manual del usuario desde el panel.
 
 ## Cómo funciona
 
-- El escaneo corre en lotes disparados desde tu navegador (no depende de cron). Si cierras la
-  pestaña, el progreso queda guardado en `data/scan.sqlite` y se retoma solo.
+- El escaneo tiene dos fases, ambas en lotes disparados desde tu navegador (no depende de cron):
+  1. **Descubrimiento**: recorre el árbol de carpetas en tandas cortas, mostrando en vivo cuántas
+     carpetas ya revisó y cuántos archivos encontró. En sitios grandes esto puede tardar varios
+     minutos, pero ahora se ve avanzar en vez de parecer congelado.
+  2. **Escaneo de contenido**: una vez que se sabe el total de archivos, la barra de progreso
+     muestra porcentaje real (procesados / total).
+  Si cierras la pestaña en cualquiera de las dos fases, el progreso queda guardado en
+  `data/scan.sqlite` y se retoma solo al volver a entrar.
+- **Carpetas sin acceso**: si una carpeta no se puede leer por permisos (típico de backups de
+  plugins como UpdraftPlus, o de caches de otros procesos), se salta sin abortar el resto del
+  escaneo y queda listada aparte, en el panel "Carpetas sin acceso" — separada de los hallazgos
+  de malware para que se note a simple vista que es un tema de permisos, no una infección.
+- **Historial de escaneos**: cada corrida (con su fecha, cantidad de archivos y hallazgos) queda
+  guardada en `data/scan.sqlite` y es consultable desde el panel "Historial de escaneos", con un
+  botón para ver los hallazgos de cualquier escaneo pasado. Esta data sobrevive a actualizaciones
+  del código del scanner — al subir una versión nueva de los archivos `.php`, nunca toques la
+  carpeta `data/` y tu historial seguirá ahí (las tablas nuevas que agregue una actualización se
+  crean solas sin tocar lo que ya existía).
 - **Capa 1 — Integridad WordPress**: compara el core contra los checksums oficiales de
   `api.wordpress.org`, y plugins/temas contra el paquete oficial de WordPress.org cuando el
   slug+versión coinciden con el repositorio.

@@ -33,6 +33,7 @@ return [
 
     // --- Límites de recursos ---
     'limits' => [
+        'discover_batch_size' => 40,   // carpetas exploradas por request en la fase de conteo inicial
         'batch_size' => 25,           // archivos procesados por request
         'batch_delay_ms' => 300,      // pausa sugerida al frontend entre lotes
         'max_file_size_full_read' => 5 * 1024 * 1024, // 5MB: por encima, solo se evalúa por nombre/extensión
