@@ -54,6 +54,10 @@ final class ScanEngine
             throw new RuntimeException('El descubrimiento de archivos aún no terminó.');
         }
 
+        if (class_exists('WPChecksumChecker')) {
+            WPChecksumChecker::resetBatchBudget();
+        }
+
         $batchSize = (int) Config::get('limits.batch_size', 25);
         $maxFullRead = (int) Config::get('limits.max_file_size_full_read', 5 * 1024 * 1024);
 
@@ -69,8 +73,8 @@ final class ScanEngine
 
         $newFindings = 0;
         $insertFinding = $pdo->prepare(
-            'INSERT INTO findings (run_id, path, sha256, severity, source, reason, detail, status)
-             VALUES (:run_id, :path, :sha256, :severity, :source, :reason, :detail, "open")'
+            'INSERT INTO findings (run_id, path, sha256, severity, source, reason, detail, location, status)
+             VALUES (:run_id, :path, :sha256, :severity, :source, :reason, :detail, :location, "open")'
         );
         $markDone = $pdo->prepare('UPDATE scan_queue SET status = "done" WHERE id = :id');
 
@@ -108,6 +112,7 @@ final class ScanEngine
                     ':source' => $finding['source'],
                     ':reason' => $finding['reason'],
                     ':detail' => $finding['detail'],
+                    ':location' => $finding['location'] ?? null,
                 ]);
                 $newFindings++;
 

@@ -74,6 +74,42 @@ final class VirusTotalChecker
         return ['processed' => $processed, 'remaining' => self::pendingCount($runId)];
     }
 
+    /**
+     * Consulta manual bajo demanda para UN hallazgo puntual, disparada desde la UI ("Consultar
+     * VirusTotal"). A diferencia de processBatch(), ignora el filtro de severidad mínima: el
+     * usuario pidió explícitamente consultar este hash.
+     *
+     * @return array{vt_ratio?:?string, vt_detail?:?string, error?:string}
+     */
+    public static function checkOne(int $findingId): array
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare('SELECT sha256 FROM findings WHERE id = :id');
+        $stmt->execute([':id' => $findingId]);
+        $finding = $stmt->fetch();
+
+        if (!$finding) {
+            return ['error' => 'Hallazgo no encontrado.'];
+        }
+
+        $apiKey = (string) Config::get('virustotal.api_key', '');
+        if ($apiKey === '' && !Config::get('dev.dry_run_virustotal', false)) {
+            return ['error' => 'VirusTotal no está configurado. Agrega virustotal.api_key en config.php.'];
+        }
+
+        self::lookupAndStore($findingId, $finding['sha256']);
+
+        $refreshed = $pdo->prepare('SELECT vt_ratio, vt_detail FROM findings WHERE id = :id');
+        $refreshed->execute([':id' => $findingId]);
+        $row = $refreshed->fetch();
+
+        if (!$row || $row['vt_ratio'] === null) {
+            return ['error' => 'VirusTotal no devolvió un resultado definitivo (puede reintentarse más tarde).'];
+        }
+
+        return $row;
+    }
+
     private static function lookupAndStore(int $findingId, string $sha256): void
     {
         $pdo = Database::connection();

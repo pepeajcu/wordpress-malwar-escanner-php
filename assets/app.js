@@ -221,6 +221,13 @@
                     tdReason.textContent = row.reason;
                     tr.appendChild(tdReason);
 
+                    const tdLocation = document.createElement('td');
+                    const locationParts = [];
+                    if (row.location) locationParts.push(row.location);
+                    if (row.ai_location) locationParts.push(row.ai_location);
+                    tdLocation.textContent = locationParts.length ? locationParts.join(' · ') : '—';
+                    tr.appendChild(tdLocation);
+
                     const tdSource = document.createElement('td');
                     tdSource.textContent = row.source;
                     tr.appendChild(tdSource);
@@ -251,6 +258,18 @@
                     viewBtn.textContent = 'Ver';
                     viewBtn.addEventListener('click', () => viewFile(row.path));
                     tdActions.appendChild(viewBtn);
+
+                    const aiBtn = document.createElement('button');
+                    aiBtn.type = 'button';
+                    aiBtn.textContent = row.ai_verdict ? 'Reanalizar con IA' : 'Analizar con IA';
+                    aiBtn.addEventListener('click', () => analyzeWithAi(row.id, aiBtn));
+                    tdActions.appendChild(aiBtn);
+
+                    const vtBtn = document.createElement('button');
+                    vtBtn.type = 'button';
+                    vtBtn.textContent = row.vt_ratio ? 'Reconsultar VirusTotal' : 'Consultar VirusTotal';
+                    vtBtn.addEventListener('click', () => checkWithVt(row.id, vtBtn));
+                    tdActions.appendChild(vtBtn);
 
                     if (row.status === 'open' && isCurrentRun) {
                         const whitelistBtn = document.createElement('button');
@@ -381,6 +400,42 @@
         });
     }
 
+    function analyzeWithAi(findingId, btn) {
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Analizando...';
+
+        postForm('ai_analyze_one', { finding_id: findingId })
+            .catch(() => CONNECTION_ERROR)
+            .then((res) => {
+                if (res.error) {
+                    alert(res.error);
+                    btn.disabled = false;
+                    btn.textContent = original;
+                    return;
+                }
+                loadFindings();
+            });
+    }
+
+    function checkWithVt(findingId, btn) {
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = 'Consultando...';
+
+        postForm('vt_check_one', { finding_id: findingId })
+            .catch(() => CONNECTION_ERROR)
+            .then((res) => {
+                if (res.error) {
+                    alert(res.error);
+                    btn.disabled = false;
+                    btn.textContent = original;
+                    return;
+                }
+                loadFindings();
+            });
+    }
+
     function quarantineFinding(id) {
         if (!confirm('¿Mover este archivo a cuarentena? Se sacará del sitio (podrás restaurarlo luego).')) return;
         postForm('quarantine', { finding_id: id }).then((res) => {
@@ -454,7 +509,14 @@
         el.controls.classList.add('hidden');
         el.progressWrap.classList.remove('hidden');
 
-        if (window.SCANNER.activeRunStatus === 'discovering') {
+        if (window.SCANNER.cronEnabled) {
+            // El Cron Job de tu hosting se encarga de ir retomando el escaneo en tandas (ver
+            // README, "Modo cron"). No disparamos el mismo lote también desde el navegador: eso
+            // haría que ambos procesaran los mismos archivos a la vez.
+            el.discoverPhase.classList.remove('hidden');
+            el.processPhase.classList.add('hidden');
+            el.discoverText.textContent = 'Este escaneo se está procesando en segundo plano vía cron. Actualizá la página para ver el progreso.';
+        } else if (window.SCANNER.activeRunStatus === 'discovering') {
             el.discoverPhase.classList.remove('hidden');
             el.processPhase.classList.add('hidden');
             runNextDiscoverBatch();

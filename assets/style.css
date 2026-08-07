@@ -131,6 +131,14 @@ table {
     font-size: 0.9rem;
 }
 
+.table-wrap {
+    overflow-x: auto;
+}
+
+.table-wrap table {
+    min-width: 900px;
+}
+
 th, td {
     text-align: left;
     padding: 0.5rem;

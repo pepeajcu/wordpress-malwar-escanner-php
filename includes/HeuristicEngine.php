@@ -15,6 +15,12 @@ final class HeuristicEngine
 {
     private const SCRIPT_EXTENSIONS = ['php', 'phtml', 'php3', 'php4', 'php5', 'php7', 'phar', 'inc', 'cgi', 'pl'];
 
+    /** Firmas de webshells "dedicados": el archivo completo existe para eso, no es un fragmento inyectado en un archivo legítimo. */
+    private const FULL_FILE_SIGNATURE_IDS = [
+        'known_shell_c99', 'known_shell_r57', 'known_shell_wso',
+        'known_shell_b374k', 'known_shell_filesman', 'known_shell_indoxploit',
+    ];
+
     /** @var array<int, array{id:string, severity:string, pattern:string, reason:string}> */
     private const SIGNATURES = [
         // --- Ejecución de código decodificado dinámicamente: patrón clásico de webshell ---
@@ -72,18 +78,24 @@ final class HeuristicEngine
         return $findings;
     }
 
-    /** @return array<int, array{severity:string, source:string, reason:string, detail:string}> */
+    /** @return array<int, array{severity:string, source:string, reason:string, detail:string, location:string}> */
     private static function analyzeContent(string $content): array
     {
         $findings = [];
 
         foreach (self::SIGNATURES as $signature) {
-            if (preg_match($signature['pattern'], $content) === 1) {
+            if (preg_match($signature['pattern'], $content, $m, PREG_OFFSET_CAPTURE) === 1) {
+                $isFullFile = in_array($signature['id'], self::FULL_FILE_SIGNATURE_IDS, true);
+                $location = $isFullFile
+                    ? 'Todo el archivo (webshell dedicado, no un fragmento inyectado)'
+                    : 'Línea ' . self::lineFromOffset($content, $m[0][1]);
+
                 $findings[] = [
                     'severity' => $signature['severity'],
                     'source' => 'heuristic',
                     'reason' => $signature['reason'],
                     'detail' => 'Firma: ' . $signature['id'],
+                    'location' => $location,
                 ];
             }
         }
@@ -95,10 +107,17 @@ final class HeuristicEngine
                 'source' => 'heuristic',
                 'reason' => 'Alta entropía de contenido (posible código empaquetado/ofuscado/cifrado)',
                 'detail' => sprintf('Entropía de Shannon: %.2f bits/byte', $entropy),
+                'location' => 'Todo el archivo (métrica calculada sobre el contenido completo, no aplica a una línea puntual)',
             ];
         }
 
         return $findings;
+    }
+
+    /** Número de línea (1-based) donde cae un offset de bytes dentro de $content. */
+    private static function lineFromOffset(string $content, int $offset): int
+    {
+        return substr_count($content, "\n", 0, max(0, $offset)) + 1;
     }
 
     /** @return array<int, array{severity:string, source:string, reason:string, detail:string}> */
@@ -119,6 +138,7 @@ final class HeuristicEngine
                     'source' => 'heuristic',
                     'reason' => 'Extensión doble sospechosa (' . $secondLastExt . '.' . $lastExt . '): intenta parecer un archivo no ejecutable',
                     'detail' => 'Nombre de archivo: ' . basename($path),
+                    'location' => 'Todo el archivo (el problema es el nombre, no una sección puntual del contenido)',
                 ];
             }
         }
@@ -138,11 +158,20 @@ final class HeuristicEngine
             str_starts_with($header, 'GIF87a') || str_starts_with($header, 'GIF89a'); // GIF
 
         if ($isImageHeader && (str_contains($content, '<?php') || str_contains($content, '<?='))) {
+            $tagOffset = strpos($content, '<?php');
+            if ($tagOffset === false) {
+                $tagOffset = strpos($content, '<?=');
+            }
+            $location = $tagOffset === false
+                ? 'No se pudo ubicar el tag PHP embebido'
+                : 'Línea ' . self::lineFromOffset($content, $tagOffset) . ' en adelante (código PHP embebido tras la cabecera de imagen)';
+
             $findings[] = [
                 'severity' => 'critical',
                 'source' => 'heuristic',
                 'reason' => 'Archivo polyglot: cabecera de imagen válida pero contiene código PHP embebido',
                 'detail' => 'Nombre de archivo: ' . basename($path),
+                'location' => $location,
             ];
         }
 

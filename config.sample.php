@@ -40,6 +40,17 @@ return [
         'max_execution_time_hint' => 20, // segundos objetivo por lote (guía interna, no reemplaza php.ini)
         'ai_batch_size' => 3,   // archivos distintos consultados a la IA por request (capa 3)
         'vt_batch_size' => 4,   // hallazgos consultados a VirusTotal por request (capa 4)
+        'max_cold_wp_fetches_per_batch' => 2, // tope de descargas nuevas de paquetes de WordPress.org (plugins/temas) por lote de escaneo; evita que un solo request se alargue demasiado en sitios con muchos plugins nunca antes escaneados
+    ],
+
+    // --- Modo cron (opcional): retoma el escaneo activo en tandas, disparado por un Cron Job de
+    // tu hosting en vez de depender de que el navegador siga abierto. Ver tools/cron_scan.php y
+    // la sección "Modo cron" del README para cómo darlo de alta en cPanel.
+    'cron' => [
+        'enabled' => false,             // ponelo en true una vez que hayas configurado el Cron Job en cPanel
+        'time_budget_seconds' => 45,    // cuánto puede trabajar cada corrida de cron antes de cortar y dejar el resto para el próximo tick
+        'run_ai_layer' => true,         // si el cron también dispara la capa de IA sobre hallazgos pendientes (consume tus API keys automáticamente)
+        'run_vt_layer' => true,         // ídem para VirusTotal
     ],
 
     // --- Proveedores de IA (capa 3) ---

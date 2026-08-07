@@ -16,6 +16,12 @@ final class WPChecksumChecker
     private const MANIFEST_TTL = 86400; // 1 día: la versión ya publicada no cambia sus checksums
     private const CORE_DIRS = ['wp-admin', 'wp-includes'];
 
+    // Tope de descargas de paquete "en frío" (sin caché todavía) por lote de escaneo: cada una
+    // puede tardar hasta el timeout de HttpClient, y un lote con varios plugins/temas nuevos a
+    // la vez puede hacer que ese único request de PHP se pase de largo del límite del hosting.
+    private const MAX_COLD_FETCHES_PER_BATCH = 2;
+    private static int $coldFetchesThisBatch = 0;
+
     /** @var array<int, array{root:string, version:string}>|null */
     private static ?array $installations = null;
 
@@ -26,6 +32,12 @@ final class WPChecksumChecker
             self::$installations = WordPressDetector::findInstallations();
         }
         return self::$installations;
+    }
+
+    /** Llamado por ScanEngine al empezar cada lote de escaneo. */
+    public static function resetBatchBudget(): void
+    {
+        self::$coldFetchesThisBatch = 0;
     }
 
     /** Punto de entrada por-archivo, llamado desde ScanEngine dentro del lote normal. */
@@ -76,6 +88,7 @@ final class WPChecksumChecker
                 'source' => 'wp_checksum',
                 'reason' => 'Archivo core de WordPress modificado respecto a la versión oficial ' . $version,
                 'detail' => 'Ruta relativa: ' . $relative,
+                'location' => 'Todo el archivo (difiere del hash oficial; no distinguimos qué línea exacta cambió)',
             ]];
         }
 
@@ -138,6 +151,7 @@ final class WPChecksumChecker
             'source' => 'wp_checksum',
             'reason' => ucfirst($type) . " oficial \"$slug\" modificado respecto al paquete publicado en WordPress.org (v{$matching['version']})",
             'detail' => 'Ruta relativa dentro del paquete: ' . $withinPackage,
+            'location' => 'Todo el archivo (difiere del hash oficial; no distinguimos qué línea exacta cambió)',
         ]];
     }
 
@@ -190,6 +204,13 @@ final class WPChecksumChecker
             return null;
         }
 
+        if (self::$coldFetchesThisBatch >= self::MAX_COLD_FETCHES_PER_BATCH) {
+            // Ya se agotó el presupuesto de descargas nuevas para este lote; no se cachea como
+            // "no disponible" (a propósito) para que se reintente en un lote posterior.
+            return null;
+        }
+        self::$coldFetchesThisBatch++;
+
         $url = "https://downloads.wordpress.org/{$type}/{$slug}.{$version}.zip";
         $response = HttpClient::get($url, [], 20);
         if (!$response['ok'] || $response['body'] === '') {
@@ -239,8 +260,8 @@ final class WPChecksumChecker
 
         $pdo = Database::connection();
         $insertFinding = $pdo->prepare(
-            'INSERT INTO findings (run_id, path, sha256, severity, source, reason, detail, status)
-             VALUES (:run_id, :path, :sha256, :severity, :source, :reason, :detail, "open")'
+            'INSERT INTO findings (run_id, path, sha256, severity, source, reason, detail, location, status)
+             VALUES (:run_id, :path, :sha256, :severity, :source, :reason, :detail, :location, "open")'
         );
 
         foreach ($installs as $install) {
@@ -275,6 +296,7 @@ final class WPChecksumChecker
                         count($manifest)
                     ),
                     ':detail' => 'No se listan los archivos individualmente por ser demasiados; revisa manualmente la versión real de WordPress instalada.',
+                    ':location' => 'No aplica (el hallazgo es la instalación completa, no un archivo puntual)',
                 ]);
             } elseif (!empty($missing)) {
                 $pdo->beginTransaction();
@@ -287,6 +309,7 @@ final class WPChecksumChecker
                         ':source' => 'wp_checksum',
                         ':reason' => 'Archivo core de WordPress faltante (versión ' . $install['version'] . ')',
                         ':detail' => 'Esperado en: ' . $relative,
+                        ':location' => 'Todo el archivo (no existe; debería estar y no está)',
                     ]);
                 }
                 $pdo->commit();
@@ -328,6 +351,7 @@ final class WPChecksumChecker
                 ':source' => 'wp_checksum',
                 ':reason' => 'Archivo no reconocido dentro de una carpeta core de WordPress (' . $relative . ') — fuerte indicio de backdoor',
                 ':detail' => 'No forma parte del paquete oficial de WordPress para esta versión.',
+                ':location' => 'Todo el archivo (archivo entero ajeno al paquete oficial de WordPress)',
             ]);
         }
     }

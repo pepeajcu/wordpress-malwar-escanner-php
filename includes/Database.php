@@ -23,6 +23,7 @@ final class Database
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
         $pdo->exec('PRAGMA journal_mode = WAL');
         $pdo->exec('PRAGMA foreign_keys = ON');
+        $pdo->exec('PRAGMA busy_timeout = 5000'); // el modo cron y el navegador pueden escribir casi a la vez
 
         self::$instance = $pdo;
         self::migrate($pdo);
@@ -93,10 +94,12 @@ final class Database
                 source TEXT NOT NULL,
                 reason TEXT NOT NULL,
                 detail TEXT,
+                location TEXT,
                 ai_provider TEXT,
                 ai_verdict TEXT,
                 ai_confidence REAL,
                 ai_explanation TEXT,
+                ai_location TEXT,
                 vt_ratio TEXT,
                 vt_detail TEXT,
                 status TEXT NOT NULL DEFAULT "open",
@@ -106,6 +109,10 @@ final class Database
         ');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_findings_run ON findings (run_id)');
         $pdo->exec('CREATE INDEX IF NOT EXISTS idx_findings_status ON findings (status)');
+        // Bases de datos creadas antes de que existieran estas columnas: las agregamos si faltan
+        // (CREATE TABLE IF NOT EXISTS no las agrega solo por editar el CREATE de arriba).
+        self::ensureColumn($pdo, 'findings', 'location', 'TEXT');
+        self::ensureColumn($pdo, 'findings', 'ai_location', 'TEXT');
 
         $pdo->exec('
             CREATE TABLE IF NOT EXISTS whitelist (
@@ -123,10 +130,12 @@ final class Database
                 verdict TEXT NOT NULL,
                 confidence REAL,
                 explanation TEXT,
+                location TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (sha256, provider)
             )
         ');
+        self::ensureColumn($pdo, 'ai_verdict_cache', 'location', 'TEXT');
 
         $pdo->exec('
             CREATE TABLE IF NOT EXISTS vt_cache (
@@ -165,5 +174,17 @@ final class Database
                 restored_at TEXT
             )
         ');
+    }
+
+    /** Agrega una columna a una tabla existente si todavía no existe (migración idempotente). */
+    private static function ensureColumn(PDO $pdo, string $table, string $column, string $definition): void
+    {
+        $columns = $pdo->query('PRAGMA table_info(' . $table . ')')->fetchAll();
+        foreach ($columns as $col) {
+            if ($col['name'] === $column) {
+                return;
+            }
+        }
+        $pdo->exec('ALTER TABLE ' . $table . ' ADD COLUMN ' . $column . ' ' . $definition);
     }
 }

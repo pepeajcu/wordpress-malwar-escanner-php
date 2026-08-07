@@ -75,6 +75,7 @@ final class AIManager
                 'verdict' => 'suspicious',
                 'confidence' => 0.5,
                 'explanation' => 'Modo dry-run: respuesta simulada, sin llamada real a un proveedor de IA.',
+                'location' => null,
             ];
             $providerUsed = 'dry-run';
         } else {
@@ -99,21 +100,56 @@ final class AIManager
         }
 
         if ($verdict === null) {
-            $verdict = ['verdict' => 'unknown', 'confidence' => 0.0, 'explanation' => 'Ningún proveedor de IA configurado respondió correctamente.'];
+            $verdict = ['verdict' => 'unknown', 'confidence' => 0.0, 'explanation' => 'Ningún proveedor de IA configurado respondió correctamente.', 'location' => null];
             $providerUsed = 'none';
         }
 
         $pdo->prepare(
-            'UPDATE findings SET ai_provider = :provider, ai_verdict = :verdict, ai_confidence = :confidence, ai_explanation = :explanation
+            'UPDATE findings SET ai_provider = :provider, ai_verdict = :verdict, ai_confidence = :confidence, ai_explanation = :explanation, ai_location = :location
              WHERE run_id = :run_id AND path = :path'
         )->execute([
             ':provider' => $providerUsed,
             ':verdict' => $verdict['verdict'],
             ':confidence' => $verdict['confidence'],
             ':explanation' => $verdict['explanation'],
+            ':location' => $verdict['location'] ?? null,
             ':run_id' => $runId,
             ':path' => $path,
         ]);
+    }
+
+    /**
+     * Análisis manual bajo demanda para UN hallazgo puntual, disparado desde la UI ("Analizar con
+     * IA"). A diferencia de processBatch(), ignora el filtro de severidad y el estado ai_verdict
+     * IS NULL: el usuario pidió explícitamente (re)analizar este archivo.
+     *
+     * @return array{provider?:string, verdict?:string, confidence?:float, explanation?:string, location?:?string, error?:string}
+     */
+    public static function analyzeOne(int $findingId): array
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare('SELECT run_id, path, sha256 FROM findings WHERE id = :id');
+        $stmt->execute([':id' => $findingId]);
+        $finding = $stmt->fetch();
+
+        if (!$finding) {
+            return ['error' => 'Hallazgo no encontrado.'];
+        }
+
+        $providers = self::buildProviders();
+        if (empty($providers) && !Config::get('dev.dry_run_ai', false)) {
+            return ['error' => 'Ningún proveedor de IA configurado. Agrega una api_key en config.php.'];
+        }
+
+        self::analyzeAndStore((int) $finding['run_id'], $finding['path'], $finding['sha256'], $providers);
+
+        $refreshed = $pdo->prepare(
+            'SELECT ai_provider, ai_verdict, ai_confidence, ai_explanation, ai_location FROM findings WHERE id = :id'
+        );
+        $refreshed->execute([':id' => $findingId]);
+        $row = $refreshed->fetch();
+
+        return $row ?: ['error' => 'No se pudo leer el resultado del análisis.'];
     }
 
     private static function readSnippet(string $path): string

@@ -7,7 +7,7 @@ final class AIVerdictCache
     public static function get(string $sha256, string $provider): ?array
     {
         $pdo = Database::connection();
-        $stmt = $pdo->prepare('SELECT verdict, confidence, explanation FROM ai_verdict_cache WHERE sha256 = :sha256 AND provider = :provider');
+        $stmt = $pdo->prepare('SELECT verdict, confidence, explanation, location FROM ai_verdict_cache WHERE sha256 = :sha256 AND provider = :provider');
         $stmt->execute([':sha256' => $sha256, ':provider' => $provider]);
         $row = $stmt->fetch();
         return $row ?: null;
@@ -22,19 +22,20 @@ final class AIVerdictCache
             ':verdict' => $verdict['verdict'],
             ':confidence' => $verdict['confidence'],
             ':explanation' => $verdict['explanation'],
+            ':location' => $verdict['location'] ?? null,
         ];
 
         $update = $pdo->prepare(
             'UPDATE ai_verdict_cache
-             SET verdict = :verdict, confidence = :confidence, explanation = :explanation
+             SET verdict = :verdict, confidence = :confidence, explanation = :explanation, location = :location
              WHERE sha256 = :sha256 AND provider = :provider'
         );
         $update->execute($params);
 
         if ($update->rowCount() === 0) {
             $insert = $pdo->prepare(
-                'INSERT INTO ai_verdict_cache (sha256, provider, verdict, confidence, explanation)
-                 VALUES (:sha256, :provider, :verdict, :confidence, :explanation)'
+                'INSERT INTO ai_verdict_cache (sha256, provider, verdict, confidence, explanation, location)
+                 VALUES (:sha256, :provider, :verdict, :confidence, :explanation, :location)'
             );
             $insert->execute($params);
         }

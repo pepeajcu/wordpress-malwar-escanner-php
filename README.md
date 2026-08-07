@@ -32,7 +32,9 @@ es siempre una acción manual del usuario desde el panel.
 
 ## Cómo funciona
 
-- El escaneo tiene dos fases, ambas en lotes disparados desde tu navegador (no depende de cron):
+- El escaneo tiene dos fases, ambas en lotes disparados desde tu navegador por defecto (no
+  requiere cron para funcionar; ver la sección "Modo cron" más abajo si querés que se procese
+  solo, repartido en el tiempo, sin depender de que dejes la pestaña abierta):
   1. **Descubrimiento**: recorre el árbol de carpetas en tandas cortas, mostrando en vivo cuántas
      carpetas ya revisó y cuántos archivos encontró. En sitios grandes esto puede tardar varios
      minutos, pero ahora se ve avanzar en vez de parecer congelado.
@@ -73,6 +75,43 @@ es siempre una acción manual del usuario desde el panel.
   `quarantine/suspicious_files.log` y en el manifest interno. Se puede **restaurar** en cualquier
   momento desde la sección "Cuarentena" del panel.
 
+## Modo cron (opcional)
+
+Si tu sitio es grande y el escaneo desde el navegador choca con el límite de tiempo de tu
+hosting ("Se perdió la conexión con el servidor o tardó demasiado..."), podés hacer que un Cron
+Job de tu hosting vaya retomando el escaneo activo en tandas cortas, repartido en el tiempo, sin
+depender de que dejes la pestaña abierta.
+
+**Cómo funciona:** vos arrancás el escaneo una vez desde el panel ("Iniciar escaneo") y podés
+cerrar la pestaña; el Cron Job ejecuta `tools/cron_scan.php` cada cierto tiempo, y cada corrida
+retoma el descubrimiento de carpetas, el escaneo de archivos, y (si están activadas) las capas
+de IA y VirusTotal, durante como máximo `cron.time_budget_seconds` segundos, dejando el resto
+para el próximo tick. No arranca escaneos nuevos por su cuenta — solo continúa lo que ya
+iniciaste manualmente.
+
+**Alta:**
+1. En `config.php`, dentro de `cron`, poné `'enabled' => true`. Ajustá `run_ai_layer` /
+   `run_vt_layer` a `false` si preferís que esas capas queden solo para disparar manualmente por
+   hallazgo desde el panel (botones "Analizar con IA" / "Consultar VirusTotal"), en vez de que el
+   cron las corra automáticamente (con el consumo de API que eso implica).
+2. En cPanel → Avanzado → **Cron Jobs**, agregá un nuevo cron con un comando como:
+   ```
+   /usr/local/bin/ea-phpXX /home2/tu_usuario/public_html/tu-carpeta-del-scanner/tools/cron_scan.php >/dev/null 2>&1
+   ```
+   Reemplazá `ea-phpXX` por la versión de PHP real que le tenés asignada a ese dominio (se ve en
+   **MultiPHP Manager**) y la ruta por la ruta absoluta real de esta carpeta en tu hosting.
+3. Elegí una frecuencia de arranque — por ejemplo cada 10-15 minutos es un buen punto de
+   partida. Ajustala junto con `cron.time_budget_seconds`: con esos valores, un escaneo grande
+   queda repartido a lo largo de varias horas o de todo el día en vez de intentar completarse de
+   una sola vez.
+4. El script tiene su propio lock (`data/cron.lock`) para que dos corridas de cron no se pisen si
+   una tarda más de lo esperado (por ejemplo, esperando una API de IA lenta).
+
+Con `cron.enabled = true`, el panel deja de disparar lotes automáticamente al abrir la página
+mientras haya un escaneo en curso (para no procesar los mismos archivos dos veces a la vez que
+el cron) — solo muestra el progreso. El botón "Iniciar escaneo" y las acciones manuales sobre
+cada hallazgo siguen funcionando igual.
+
 ## Límites de recursos (ajustables en `config.php`)
 
 - `limits.batch_size`: archivos por request del lote de escaneo normal.
@@ -81,7 +120,12 @@ es siempre una acción manual del usuario desde el panel.
 - `limits.ai_batch_size` / `limits.vt_batch_size`: cuántos hallazgos se consultan por request en
   las capas de IA/VirusTotal (llamadas de red, van en su propio lote para no alargar el escaneo
   normal).
-- Si tu hosting es muy restrictivo (`max_execution_time` bajo), reduce estos valores.
+- `limits.max_cold_wp_fetches_per_batch`: cuántos paquetes de plugin/tema nuevos (sin caché
+  todavía) se descargan de WordPress.org por lote de escaneo. En sitios con muchos plugins/temas
+  nunca antes escaneados, esto es una causa frecuente de que un solo lote tarde mucho más de lo
+  que sugiere `batch_size` — bajalo si seguís viendo timeouts.
+- Si tu hosting es muy restrictivo (`max_execution_time` bajo), reduce estos valores. Para sitios
+  grandes, considerá además el **modo cron** de arriba en vez de bajar mucho estos números.
 
 ## Advertencias importantes
 

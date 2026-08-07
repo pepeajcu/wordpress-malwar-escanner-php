@@ -111,6 +111,22 @@ if ($action === 'vt_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($action === 'ai_analyze_one' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    Auth::requireCsrf();
+    header('Content-Type: application/json');
+    $findingId = (int) ($_POST['finding_id'] ?? 0);
+    echo json_encode(AIManager::analyzeOne($findingId));
+    exit;
+}
+
+if ($action === 'vt_check_one' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    Auth::requireCsrf();
+    header('Content-Type: application/json');
+    $findingId = (int) ($_POST['finding_id'] ?? 0);
+    echo json_encode(VirusTotalChecker::checkOne($findingId));
+    exit;
+}
+
 if ($action === 'whitelist' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     Auth::requireCsrf();
     header('Content-Type: application/json');
@@ -268,12 +284,14 @@ $csrfToken = Auth::csrfToken();
                 </select>
             </label>
         </div>
+        <div class="table-wrap">
         <table id="findings-table">
             <thead>
                 <tr>
                     <th>Severidad</th>
                     <th>Archivo</th>
                     <th>Motivo</th>
+                    <th>Ubicación</th>
                     <th>Origen</th>
                     <th>Veredicto IA</th>
                     <th>VirusTotal</th>
@@ -282,6 +300,7 @@ $csrfToken = Auth::csrfToken();
             </thead>
             <tbody></tbody>
         </table>
+        </div>
     </section>
 
     <section class="panel">
@@ -331,7 +350,8 @@ $csrfToken = Auth::csrfToken();
         csrfToken: <?= json_encode($csrfToken) ?>,
         activeRunId: <?= json_encode($activeRunId) ?>,
         activeRunStatus: <?= json_encode($run['status'] ?? null) ?>,
-        batchDelayMs: <?= json_encode((int) Config::get('limits.batch_delay_ms', 300)) ?>
+        batchDelayMs: <?= json_encode((int) Config::get('limits.batch_delay_ms', 300)) ?>,
+        cronEnabled: <?= json_encode((bool) Config::get('cron.enabled', false)) ?>
     };
 </script>
 <script src="assets/app.js"></script>
