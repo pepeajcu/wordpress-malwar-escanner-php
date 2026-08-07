@@ -33,24 +33,33 @@ final class HashCache
 
     public static function store(string $path, string $sha256, int $mtime, int $size, string $verdict): void
     {
+        // No usamos "INSERT ... ON CONFLICT DO UPDATE" (upsert) porque el SQLite que trae
+        // compilado el PHP en algunos hostings compartidos es anterior a 3.24 y no soporta esa
+        // sintaxis (error "near ON: syntax error"). UPDATE + INSERT condicional es compatible
+        // con cualquier versión.
         $pdo = Database::connection();
-        $stmt = $pdo->prepare(
-            'INSERT INTO file_hashes (path, sha256, mtime, size, last_verdict, updated_at)
-             VALUES (:path, :sha256, :mtime, :size, :verdict, CURRENT_TIMESTAMP)
-             ON CONFLICT(path) DO UPDATE SET
-                sha256 = excluded.sha256,
-                mtime = excluded.mtime,
-                size = excluded.size,
-                last_verdict = excluded.last_verdict,
-                updated_at = excluded.updated_at'
-        );
-        $stmt->execute([
+        $params = [
             ':path' => $path,
             ':sha256' => $sha256,
             ':mtime' => $mtime,
             ':size' => $size,
             ':verdict' => $verdict,
-        ]);
+        ];
+
+        $update = $pdo->prepare(
+            'UPDATE file_hashes
+             SET sha256 = :sha256, mtime = :mtime, size = :size, last_verdict = :verdict, updated_at = CURRENT_TIMESTAMP
+             WHERE path = :path'
+        );
+        $update->execute($params);
+
+        if ($update->rowCount() === 0) {
+            $insert = $pdo->prepare(
+                'INSERT INTO file_hashes (path, sha256, mtime, size, last_verdict, updated_at)
+                 VALUES (:path, :sha256, :mtime, :size, :verdict, CURRENT_TIMESTAMP)'
+            );
+            $insert->execute($params);
+        }
     }
 
     public static function isWhitelisted(string $sha256): bool
@@ -64,10 +73,14 @@ final class HashCache
     public static function addToWhitelist(string $sha256, string $path, ?string $reason = null): void
     {
         $pdo = Database::connection();
-        $stmt = $pdo->prepare(
-            'INSERT INTO whitelist (sha256, path, reason) VALUES (:sha256, :path, :reason)
-             ON CONFLICT(sha256) DO UPDATE SET path = excluded.path, reason = excluded.reason'
-        );
-        $stmt->execute([':sha256' => $sha256, ':path' => $path, ':reason' => $reason]);
+        $params = [':sha256' => $sha256, ':path' => $path, ':reason' => $reason];
+
+        $update = $pdo->prepare('UPDATE whitelist SET path = :path, reason = :reason WHERE sha256 = :sha256');
+        $update->execute($params);
+
+        if ($update->rowCount() === 0) {
+            $insert = $pdo->prepare('INSERT INTO whitelist (sha256, path, reason) VALUES (:sha256, :path, :reason)');
+            $insert->execute($params);
+        }
     }
 }

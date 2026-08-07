@@ -16,18 +16,27 @@ final class AIVerdictCache
     public static function set(string $sha256, string $provider, array $verdict): void
     {
         $pdo = Database::connection();
-        $stmt = $pdo->prepare(
-            'INSERT INTO ai_verdict_cache (sha256, provider, verdict, confidence, explanation)
-             VALUES (:sha256, :provider, :verdict, :confidence, :explanation)
-             ON CONFLICT(sha256, provider) DO UPDATE SET
-                verdict = excluded.verdict, confidence = excluded.confidence, explanation = excluded.explanation'
-        );
-        $stmt->execute([
+        $params = [
             ':sha256' => $sha256,
             ':provider' => $provider,
             ':verdict' => $verdict['verdict'],
             ':confidence' => $verdict['confidence'],
             ':explanation' => $verdict['explanation'],
-        ]);
+        ];
+
+        $update = $pdo->prepare(
+            'UPDATE ai_verdict_cache
+             SET verdict = :verdict, confidence = :confidence, explanation = :explanation
+             WHERE sha256 = :sha256 AND provider = :provider'
+        );
+        $update->execute($params);
+
+        if ($update->rowCount() === 0) {
+            $insert = $pdo->prepare(
+                'INSERT INTO ai_verdict_cache (sha256, provider, verdict, confidence, explanation)
+                 VALUES (:sha256, :provider, :verdict, :confidence, :explanation)'
+            );
+            $insert->execute($params);
+        }
     }
 }

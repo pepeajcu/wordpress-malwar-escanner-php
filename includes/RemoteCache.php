@@ -29,10 +29,14 @@ final class RemoteCache
     public static function set(string $key, array $value): void
     {
         $pdo = Database::connection();
-        $stmt = $pdo->prepare(
-            'INSERT INTO remote_cache (cache_key, value, fetched_at) VALUES (:key, :value, CURRENT_TIMESTAMP)
-             ON CONFLICT(cache_key) DO UPDATE SET value = excluded.value, fetched_at = excluded.fetched_at'
-        );
-        $stmt->execute([':key' => $key, ':value' => json_encode($value)]);
+        $params = [':key' => $key, ':value' => json_encode($value)];
+
+        $update = $pdo->prepare('UPDATE remote_cache SET value = :value, fetched_at = CURRENT_TIMESTAMP WHERE cache_key = :key');
+        $update->execute($params);
+
+        if ($update->rowCount() === 0) {
+            $insert = $pdo->prepare('INSERT INTO remote_cache (cache_key, value, fetched_at) VALUES (:key, :value, CURRENT_TIMESTAMP)');
+            $insert->execute($params);
+        }
     }
 }
