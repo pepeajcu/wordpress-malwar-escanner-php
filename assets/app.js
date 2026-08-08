@@ -18,6 +18,7 @@
         progressText: document.getElementById('progress-text'),
         aiProgressText: document.getElementById('ai-progress-text'),
         vtProgressText: document.getElementById('vt-progress-text'),
+        forceRestartBtn: document.getElementById('force-restart-btn'),
         severityFilter: document.getElementById('severity-filter'),
         findingsBody: document.querySelector('#findings-table tbody'),
         quarantineBody: document.querySelector('#quarantine-table tbody'),
@@ -72,6 +73,36 @@
         el.progressWrap.classList.add('hidden');
         el.controls.classList.remove('hidden');
         el.startBtn.disabled = false;
+    }
+
+    function cancelRun() {
+        if (!state.runId) return;
+        if (!confirm('¿Cancelar este escaneo y empezar uno nuevo? Los hallazgos ya encontrados se conservan; solo se descarta el progreso pendiente de este escaneo puntual.')) {
+            return;
+        }
+
+        el.forceRestartBtn.disabled = true;
+
+        postForm('cancel_run', { run_id: state.runId })
+            .catch(() => CONNECTION_ERROR)
+            .then((res) => {
+                el.forceRestartBtn.disabled = false;
+
+                if (!res.ok) {
+                    alert(res.error || 'No se pudo cancelar el escaneo (puede que ya haya terminado o no exista).');
+                    return;
+                }
+
+                state.runId = null;
+                state.viewRunId = null;
+                state.polling = false;
+                el.progressWrap.classList.add('hidden');
+                el.controls.classList.remove('hidden');
+                el.startBtn.disabled = false;
+                showViewingBanner();
+                loadHistory();
+                loadFindings();
+            });
     }
 
     function runNextDiscoverBatch() {
@@ -341,7 +372,7 @@
                     tr.appendChild(tdId);
 
                     const tdStatus = document.createElement('td');
-                    const statusLabels = { discovering: 'Explorando...', running: 'Escaneando...', completed: 'Completo' };
+                    const statusLabels = { discovering: 'Explorando...', running: 'Escaneando...', completed: 'Completo', cancelled: 'Cancelado' };
                     tdStatus.textContent = statusLabels[row.status] || row.status;
                     tr.appendChild(tdStatus);
 
@@ -495,6 +526,7 @@
     }
 
     el.startBtn.addEventListener('click', startScan);
+    el.forceRestartBtn.addEventListener('click', cancelRun);
     el.severityFilter.addEventListener('change', loadFindings);
     el.closeViewer.addEventListener('click', () => el.viewer.classList.add('hidden'));
     el.backToCurrent.addEventListener('click', (ev) => {

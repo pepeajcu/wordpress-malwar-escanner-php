@@ -111,6 +111,15 @@ if ($action === 'vt_batch' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+if ($action === 'cancel_run' && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    Auth::requireCsrf();
+    header('Content-Type: application/json');
+    $runId = (int) ($_POST['run_id'] ?? 0);
+    $ok = ScanEngine::cancelRun($runId);
+    echo json_encode(['ok' => $ok]);
+    exit;
+}
+
 if ($action === 'ai_analyze_one' && $_SERVER['REQUEST_METHOD'] === 'POST') {
     Auth::requireCsrf();
     header('Content-Type: application/json');
@@ -253,6 +262,7 @@ $csrfToken = Auth::csrfToken();
             </div>
             <p id="ai-progress-text" class="muted"></p>
             <p id="vt-progress-text" class="muted"></p>
+            <button id="force-restart-btn" type="button" class="btn-danger">Cancelar este escaneo y empezar uno nuevo</button>
         </div>
     </section>
 

@@ -72,6 +72,12 @@ button:disabled {
     cursor: not-allowed;
 }
 
+.btn-danger {
+    background: var(--critical);
+    border-color: var(--critical);
+    margin-top: 0.75rem;
+}
+
 .alert {
     padding: 0.5rem 0.75rem;
     border-radius: 8px;

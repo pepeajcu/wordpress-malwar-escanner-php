@@ -42,6 +42,29 @@ final class ScanEngine
         return $row ? (int) $row['id'] : null;
     }
 
+    /**
+     * Cancela un escaneo atascado en "discovering"/"running" (p. ej. porque el hosting corta el
+     * request a mitad de camino y el usuario no puede ni ver ni descartar el run activo). Los
+     * hallazgos ya encontrados se conservan; el run queda en el historial marcado "cancelled" y
+     * deja de ser resumible, liberando el botón "Iniciar escaneo" para arrancar uno nuevo.
+     */
+    public static function cancelRun(int $runId): bool
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare('SELECT status FROM scan_runs WHERE id = :id');
+        $stmt->execute([':id' => $runId]);
+        $status = $stmt->fetchColumn();
+
+        if ($status === false || !in_array($status, ['discovering', 'running'], true)) {
+            return false;
+        }
+
+        $pdo->prepare('UPDATE scan_runs SET status = "cancelled", finished_at = CURRENT_TIMESTAMP WHERE id = :id')
+            ->execute([':id' => $runId]);
+
+        return true;
+    }
+
     /** @return array{processed:int, pending:int, total:int, new_findings:int, finished:bool} */
     public static function processBatch(int $runId): array
     {
