@@ -237,7 +237,7 @@ $csrfToken = Auth::csrfToken();
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Scanner Antimalware</title>
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/style.css?v=<?= filemtime(__DIR__ . '/assets/style.css') ?>">
 </head>
 <body>
 <header class="topbar">
@@ -364,6 +364,6 @@ $csrfToken = Auth::csrfToken();
         cronEnabled: <?= json_encode((bool) Config::get('cron.enabled', false)) ?>
     };
 </script>
-<script src="assets/app.js"></script>
+<script src="assets/app.js?v=<?= filemtime(__DIR__ . '/assets/app.js') ?>"></script>
 </body>
 </html>
